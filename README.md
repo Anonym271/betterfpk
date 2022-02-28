@@ -1,2 +1,2 @@
 # betterfpk
-SystemC FPK-Tool with ZLC compression
+SystemC FPK-Tool with ZLC compression. Mostly incomplete, but does its job (for now).
