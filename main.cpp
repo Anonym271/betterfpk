@@ -9,12 +9,17 @@
 
 #include <cstdint>
 
+#include "Options.hpp"
 #include "RLE.hpp"
 #include "ZLC.hpp"
 #include "MultithreadCompressor.hpp"
 
 namespace fs = std::filesystem;
 namespace ch = std::chrono;
+
+
+Options options;
+
 
 typedef std::pair<uint32_t, fs::path> file_info_t;
 
@@ -51,22 +56,15 @@ struct FpkEntry2
 	char filename[24];
 };
 
-
-struct
-{
-	bool verbose = false;
-	bool rle = false;
-	bool zlc = true;
-	bool obfuscate = false;
-	bool multithread = true;
-} options;
-
-
 std::string str_tolower(std::string s) {
 	std::transform(s.begin(), s.end(), s.begin(),
 		[](unsigned char c) { return std::tolower(c); } // correct
 	);
 	return s;
+}
+inline const char* bool_to_str(bool b)
+{
+	return b ? "true" : "false";
 }
 
 void save_file(const std::vector<uint8_t>& file, const fs::path& filename)
@@ -160,9 +158,18 @@ template <typename T>
 void extract_obfuscated(std::istream& fin, const fs::path& outpath, uint32_t entry_count)
 {
 	fin.seekg(-(int)sizeof(FpkTRL), std::ios::end);
+	
 	auto trl = read<FpkTRL>(fin);
+	if (options.verbose)
+	{
+		std::cout << "Obfuscation key: 0x" << std::right << std::hex << std::setfill('0') << std::setw(8) 
+			<< trl.key << std::left << std::dec << std::setfill(' ')
+			<< "\n\n";
+	}
+
 	fin.seekg(trl.toc_offset);
 	auto toc = read<T>(fin, entry_count);
+	
 	obfuscate(toc, trl.key);
 	extract_toc(fin, toc, outpath, entry_count);
 }
@@ -175,6 +182,14 @@ void extract_fpk(const fs::path& inpath, const fs::path& outpath, int version = 
 	uint32_t obfuscated = entry_count & 0x80000000;
 	entry_count &= ~0x80000000;
 	
+	if (options.verbose)
+	{
+		std::cout
+			<< "File version: " << version << '\n'
+			<< "Entry count: " << entry_count << '\n'
+			<< "Obfuscated: " << bool_to_str(obfuscated) << '\n';
+	}
+
 	fs::create_directories(outpath);
 
 	if (obfuscated) 
@@ -204,6 +219,9 @@ uint32_t hash(const std::string& s)
 
 void pack_fpk_sync(const std::deque<fs::path>& files, const fs::path& outpath)
 {
+	if (options.verbose)
+		std::cout << "Starting single threaded packing...\n";
+
 	std::ofstream fout(outpath, std::ios::binary);
 	fout.exceptions(std::ios::failbit | std::ios::badbit);
 	
@@ -266,6 +284,9 @@ void file_loader(
 
 void pack_fpk_async(const std::deque<fs::path>& files, const fs::path& outpath)
 {
+	if (options.verbose)
+		std::cout << "Starting multi threaded packing...\n";
+
 	std::ofstream fout(outpath, std::ios::binary);
 	fout.exceptions(std::ios::failbit | std::ios::badbit);
 
@@ -301,17 +322,8 @@ void pack_fpk_async(const std::deque<fs::path>& files, const fs::path& outpath)
 
 	FpkTRL trl;
 	trl.toc_offset = fout.tellp();
-	trl.key = 0; // TODO: custom key
+	trl.key = options.key;
 
-	FILE* log = fopen("log.txt", "w");
-
-
-	for (auto& [hash, entry] : toc_map)
-	{
-		write(fout, entry);
-		fprintf(log, "%#06x %s\n", hash, entry.filename);
-	}
-	fclose(log);
 	write(fout, trl);
 	producer.join();
 }
@@ -343,7 +355,7 @@ void pack_fpk(const fs::path& inpath, const fs::path& outpath)
 			std::cout << "Warning: Invalid file type of file " << entry.path() << ". This entry will be ignored.\n";
 	}
 
-	if (options.multithread)
+	if (options.threads != 1)
 		pack_fpk_async(files, outpath);
 	else pack_fpk_sync(files, outpath);
 }
@@ -351,13 +363,25 @@ void pack_fpk(const fs::path& inpath, const fs::path& outpath)
 
 void print_usage()
 {
-	std::cout << 
-		"Usage: <me> [mode=-e] <input> [output]\n"
-		"Modes: -e   extract (default)\n"
-		"       -p   pack\n\n"
-		"Default output paths:\n"
-		"   extract: <input> without extension\n"
-		"   pack:    <input> + \".fpk\"\n";
+	std::cout <<
+		"Usage: <me> [options] <input>\n"
+		"Options should be from the following list:\n\n"
+		"Modes:\n"
+		"  -e, --extract       extract PFK archive (default)\n"
+		"  -p, --pack          pack FPK archive\n"
+		"  -l, --list          only list files in the archive\n\n"
+		"Compressions:\n"
+		"  -z, --zlc           enable ZLC compression (default)\n"
+		"  -Z, --Zlc           disable ZLC compression\n"
+		"  -r, --rle           enable RLE compression\n"
+		"  -R, --Rle           disable ZLC compression (default)\n\n"
+		"Packing options:\n"
+		"  -t, --threads <n>   number of threads to use while compression (default: #system threads)\n"
+		"  -k, --key <key>     the key to use while obfuscating (default: 0)\n\n"
+		"General options:\n"
+		"  -h, --help          show this help message and exit\n"
+		"  -o, --output        set the output path\n"
+		"  -v, --verbose       print detailed information while processing\n";
 }
 void print_usage_and_exit(int code = 0)
 {
@@ -366,90 +390,227 @@ void print_usage_and_exit(int code = 0)
 }
 void print_usage_error_and_exit(const std::string& msg, int code = 1)
 {
-	print_usage();
-	std::cerr << "\n" << msg << "\n";
+	std::cerr << msg << '\n';
+	std::cout << "Use the -h or --help option to print a detailed usage information.\n";
 	exit(code);
 }
 void invalid_argument(const std::string& arg)
 {
-	print_usage();
-	std::cerr << "\nInvalid argument: \"" << arg << "\"\n";
-	exit(1);
+	print_usage_error_and_exit("Invalid argument: " + arg);
 }
+
+
+class argument_stream
+{
+	int argc;
+	const char** argv;
+	int pos;
+
+public:
+	argument_stream(int argc, const char** argv) :
+		argc(argc),
+		argv(argv),
+		pos(1)
+	{
+		if (argc < 1)
+			throw std::out_of_range("At least one argument required (self)");
+	}
+
+	std::string peek()
+	{
+		if (pos >= argc)
+			throw std::out_of_range("Reached end of argument list");
+		return argv[pos];
+	}
+
+	std::string next()
+	{
+		if (pos >= argc)
+			throw std::out_of_range("Reached end of argument list");
+		return argv[pos++];
+	}
+
+	unsigned long next_ulong()
+	{
+		std::string arg(next());
+		try
+		{
+			int base = 10;
+			if (arg.length() > 1 && arg[0] == '0') {
+				if (arg[1] == 'x' || arg[1] == 'X')
+					base = 16;
+			}
+			return std::stoul(arg, nullptr, base);
+		}
+		catch (const std::exception& exc)
+		{
+			throw std::invalid_argument("Unable to parse argument");
+		}
+	}
+
+	bool has_next()
+	{
+		return pos < argc;
+	}
+};
+
+std::string create_output_from_input(const std::string& input)
+{
+	if (options.mode == ExecutionMode::EXTRACT)
+	{
+		if (input.ends_with(".fpk")) {
+			return input.substr(0, input.length() - 4);
+		}
+		else return input + "_out";
+	}
+	else if (options.mode == ExecutionMode::PACK)
+		return input + ".fpk";
+	return std::string();
+}
+
+void parse_args(int argc, const char** argv)
+{
+	argument_stream args(argc, argv);
+	std::string arg;
+	while (args.has_next())
+	{
+		arg = args.next();
+
+		// flags
+		if (arg == "-h" || arg == "--help")
+			print_usage_and_exit();
+		else if (arg == "-e" || arg == "--extract")
+			options.mode = ExecutionMode::EXTRACT;
+		else if (arg == "-p" || arg == "--pack")
+			options.mode = ExecutionMode::PACK;
+		else if (arg == "-l" || arg == "--list")
+			options.mode = ExecutionMode::LIST;
+		else if (arg == "-v" || arg == "--verbose")
+			options.verbose = true;
+		else if (arg == "-z" || arg == "--zlc")
+			options.zlc = true;
+		else if (arg == "-Z" || arg == "--Zlc")
+			options.zlc = false;
+		else if (arg == "-r" || arg == "--rle")
+			options.rle = true;
+		else if (arg == "-R" || arg == "--Rle")
+			options.rle = false;
+
+		// options and input
+		else
+		{
+			try
+			{
+				if (arg == "-t" || arg == "--threads")
+					options.threads = args.next_ulong();
+				else if (arg == "-k" || arg == "--key")
+					options.key = args.next_ulong();
+				else if (arg == "-o" || arg == "--output")
+					options.output = args.next();
+				else
+				{
+					// no matching option found
+					if (!args.has_next())
+						// was last argument = input path
+						options.input = arg;
+					else
+						invalid_argument(arg);
+				}
+			}
+			catch (const std::out_of_range& exc)
+			{
+				print_usage_error_and_exit(std::string("The argument ") + arg + " requires a value!");
+			}
+			catch (const std::invalid_argument& exc)
+			{
+				print_usage_error_and_exit(std::string("The argument") + arg + " requires a 4 byte integer value!");
+			}
+		}
+	}
+
+	// validate input path
+	if (options.input.length() == 0)
+		print_usage_error_and_exit("An input argument is required.");
+	if (!fs::exists(options.input))
+	{
+		std::cerr << "The input path does not exist: " << options.input;
+		exit(1);
+	}
+
+	// check for output path if necessary
+	if (options.mode != ExecutionMode::LIST && options.output.length() == 0) 
+		options.output = create_output_from_input(options.input);
+}
+
 
 int main(int argc, const char** argv)
 {
-	char opt;
-	char mode = 'e';
-	int argn = 1;
-	std::string argstr;
-	while (argn < argc)
+	try
 	{
-		argstr = argv[argn];
-		if (argstr.length() == 0)
-			invalid_argument("");
-		if (argstr[0] == '-')
-		{
-			if (argstr.length() != 2)
-				invalid_argument(argstr);
-			opt = argstr[1];
-			switch (opt)
-			{
-			case 'h':
-				print_usage_and_exit(0);
-			case 'e':
-			case 'p':
-				mode = opt;
-				break;
-			case 'v': // set verbose flag
-				options.verbose = true;
-				break;
-				// TODO: add options for everything in struct "options"
-			default:
-				invalid_argument(argstr);
-			}
-			argn++;
-		}
-		else break;
+		parse_args(argc, argv);
 	}
-
-	if (argn >= argc)
+	catch (const std::exception& exc)
 	{
-		print_usage();
-		std::cerr << "Expected input path!\n";
+		std::cerr << "An unexpected error occurred: " << exc.what() << std::endl;
 		return 1;
 	}
-	
-	fs::path input(argv[argn++]), output;
 
-	if (argn >= argc)
+	if (options.verbose)
 	{
-		output = input;
-		if (mode == 'e')
-			output.replace_extension();
-		else if (mode == 'p')
-			output += ".fpk";
-	}
-	else output = argv[argn];
-	argn++;
+		std::cout << "Running ";
+		switch (options.mode)
+		{
+		case ExecutionMode::EXTRACT:
+			std::cout << "extraction";
+			break;
+		case ExecutionMode::PACK:
+			std::cout << "packing";
+			break;
+		case ExecutionMode::LIST:
+			std::cout << "listing";
+			break;
+		default:
+			std::cout << "unknown mode wtf\n";
+			return 1;
+		}
+		std::cout << " mode with the following options:\n"
+			<< "Input: " << options.input << '\n';
 
-	if (argn < argc)
-		std::cout << "Warning: too many arguments, the last " << argc - argn << " will be ignored.\n";
+		if (options.mode != ExecutionMode::LIST)
+			std::cout << "Output: " << options.output << '\n';
+
+		std::cout << "Verbose: true\n";
+
+		if (options.mode == ExecutionMode::PACK)
+		{
+			std::cout << "Compression threads: ";
+			if (options.threads)
+				std::cout << options.threads << '\n';
+			else
+				std::cout << "auto\n";
+			std::cout
+				<< "ZLC Compression: " << bool_to_str(options.zlc) << '\n'
+				<< "RLE Compression: " << bool_to_str(options.rle) << '\n'
+				<< "Obfuscation key: 0x" << std::right << std::hex << std::setfill('0') << std::setw(8) << options.key << std::dec << std::setfill(' ') << std::left << std::endl;
+		}
+		
+		std::cout << std::endl;
+	}
 
 	try
 	{
-		if (mode == 'e')
+		if (options.mode == ExecutionMode::EXTRACT)
 		{
-			extract_fpk(input, output);
+			extract_fpk(options.input, options.output);
 		}
-		else if (mode == 'p')
+		else if (options.mode == ExecutionMode::PACK)
 		{
-			pack_fpk(input, output);
+			pack_fpk(options.input, options.output);
 		}
-		else
+		else if (options.mode == ExecutionMode::LIST)
 		{
-			std::cerr << "What have you done?! This should not be happening!\n";
-			return 1;
+			// TODO
+			printf("Not implemented");
 		}
 	}
 	catch (const std::ios::failure& fail)

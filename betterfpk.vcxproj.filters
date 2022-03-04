@@ -32,5 +32,8 @@
     <ClInclude Include="ZlcDict.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="Options.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

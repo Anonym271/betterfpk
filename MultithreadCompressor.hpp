@@ -5,6 +5,7 @@
 #include <chrono>
 #include <functional>
 
+#include "Options.hpp"
 #include "ZLC.hpp"
 
 template<class Compressor>
@@ -139,6 +140,11 @@ public:
 	{
 		if (_state != State::idle)
 			throw std::exception("Compressor is already busy!");
+		if (options.verbose)
+		{
+			std::cout << "Starting " << (mode == Mode::compress ? "compression" : "decompression")
+				<< " with " << _thread_count << " threads.\n";
+		}
 		_should_stop = false;
 		_state = mode == Mode::compress ? State::compressing : State::decompressing;
 		for (int i = 0; i < _thread_count; i++)
