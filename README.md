@@ -16,7 +16,7 @@ Compressions:
   -z, --zlc           enable ZLC compression (default)
   -Z, --Zlc           disable ZLC compression
   -r, --rle           enable RLE compression
-  -R, --Rle           disable ZLC compression (default)
+  -R, --Rle           disable RLE compression (default)
 
 Packing options:
   -t, --threads <n>   number of threads to use while compression (default: #system threads)
