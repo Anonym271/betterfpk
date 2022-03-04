@@ -374,7 +374,7 @@ void print_usage()
 		"  -z, --zlc           enable ZLC compression (default)\n"
 		"  -Z, --Zlc           disable ZLC compression\n"
 		"  -r, --rle           enable RLE compression\n"
-		"  -R, --Rle           disable ZLC compression (default)\n\n"
+		"  -R, --Rle           disable RLE compression (default)\n\n"
 		"Packing options:\n"
 		"  -t, --threads <n>   number of threads to use while compression (default: #system threads)\n"
 		"  -k, --key <key>     the key to use while obfuscating (default: 0)\n\n"
