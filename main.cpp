@@ -298,7 +298,7 @@ void pack_fpk_async(const std::deque<fs::path>& files, const fs::path& outpath)
 	uint32_t fpk_header = file_count | 0x80000000;
 	write(fout, fpk_header);
 
-	MultithreadCompressor<zlc> compressor;
+	MultithreadCompressor<zlc> compressor(options.threads);
 	if (options.verbose)
 		compressor.task_started_callack(compression_started_callback);
 	compressor.start(MultithreadCompressor<zlc>::Mode::compress);
@@ -312,7 +312,7 @@ void pack_fpk_async(const std::deque<fs::path>& files, const fs::path& outpath)
 	while (files_processed < file_count)
 	{
 		while (!compressor.try_pop(result))
-			std::this_thread::sleep_for(std::chrono::seconds(1));
+			std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
 		h = hash(result.first);
 		toc_map.insert(std::make_pair(h, FpkV2Entry(fout.tellp(), result.second.size(), result.first, h)));
@@ -327,6 +327,9 @@ void pack_fpk_async(const std::deque<fs::path>& files, const fs::path& outpath)
 	FpkTRL trl;
 	trl.toc_offset = fout.tellp();
 	trl.key = options.key;
+
+	for (auto& [hash, entry] : toc_map)
+		write(fout, entry);
 
 	write(fout, trl);
 	producer.join();
