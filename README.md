@@ -2,6 +2,8 @@
 SystemC FPK-Tool with ZLC compression. Not stable or complete, but does its job (for now).
 Only tested with TsuyokissNext so far.
 
+You might be wondering: why is this crappy piece of code called "*better*fpk"? Well, because I once made an even worse ZLC compressor (never published it though...).
+
 ## Usage
 ```
 Usage: betterfpk.exe [options] <input>
@@ -27,3 +29,10 @@ General options:
   -o, --output        set the output path
   -v, --verbose       print detailed information while processing
 ```
+
+### Examples
+Extracting: 
+```betterfpk.exe --extract -o cg_extracted cg.fpk```
+
+Repacking:
+```betterfpk.exe --pack -o cg_modified.pak folder/with/modified/cgs```
