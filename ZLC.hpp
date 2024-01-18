@@ -18,13 +18,14 @@ public:
 	{
 		D dict;
 
-		// worst case: size = 9/8 * in_size; 10/8 for rounding
-		std::vector<uint8_t> output(input.size() * 3); 
+		// worst case: size = 9/8 * in_size; 10/8 for rounding - edit: wtf did I do here? 10/8*in_size vs. 3*in_size? Whatever, it is working... 
+		// use minimum size of 1KB for small files (ISSUE #1)
+		std::vector<uint8_t> output(std::max<size_t>(input.size() * 3, 1024));
 
 		// write header
 		uint32_t* out_32 = (uint32_t*)output.data();
 		*out_32++ = (uint32_t)'2CLZ';
-		*out_32++ = input.size();
+		*out_32++ = (uint32_t)input.size();
 		
 		// compress
 		const uint8_t* in_start = input.data();

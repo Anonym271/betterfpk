@@ -162,9 +162,9 @@ void extract_obfuscated(std::istream& fin, const fs::path& outpath, uint32_t ent
 	auto trl = read<FpkTRL>(fin);
 	if (options.verbose)
 	{
-		std::cout << "Obfuscation key: 0x" << std::right << std::hex << std::setfill('0') << std::setw(8) 
-			<< trl.key << std::left << std::dec << std::setfill(' ')
-			<< "\n\n";
+		std::cout << "Obfuscation key: 0x" << std::right << std::hex << std::setfill('0') << std::setw(8) << trl.key << '\n'
+			<< std::left << std::dec << std::setfill(' ')
+			<< "TOC offset: " << std::setw(8) << trl.toc_offset << "\n\n";
 	}
 
 	fin.seekg(trl.toc_offset);
@@ -184,10 +184,14 @@ void extract_fpk(const fs::path& inpath, const fs::path& outpath, int version = 
 	
 	if (options.verbose)
 	{
+		auto old_pos = fin.tellg();
+		fin.seekg(0, std::ios::end);
 		std::cout
+			<< "File size: " << (size_t)fin.tellg() << '\n'
 			<< "File version: " << version << '\n'
 			<< "Entry count: " << entry_count << '\n'
 			<< "Obfuscated: " << bool_to_str(obfuscated) << '\n';
+		fin.seekg(old_pos);
 	}
 
 	fs::create_directories(outpath);
