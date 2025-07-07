@@ -33,9 +33,12 @@ General options:
 
 ### Examples
 Extracting: 
-```betterfpk.exe --extract -o cg_extracted cg.fpk```
-```betterfpk.exe --extract --version 4 -o data_extracted data.fpk```
-
+```
+betterfpk.exe --extract -o cg_extracted cg.fpk
+betterfpk.exe --extract --version 4 -o data_extracted data.fpk
+```
 Repacking:
-```betterfpk.exe --pack -o cg_modified.pak folder/with/modified/cgs```
-```betterfpk.exe --pack --version 4 -o data_modified.pak folder/with/modified/data```
+```
+betterfpk.exe --pack -o cg_modified.pak folder/with/modified/cgs
+betterfpk.exe --pack --version 4 -o data_modified.pak folder/with/modified/data
+```
