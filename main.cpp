@@ -418,6 +418,7 @@ void pack_fpk(const fs::path& inpath, const fs::path& outpath, int version)
 void print_usage()
 {
 	std::cout <<
+		"Made by Anonym271, patched by julixian 2025.07.07\n"
 		"Usage: <me> [options] <input>\n"
 		"Options should be from the following list:\n\n"
 		"Modes:\n"
