@@ -49,6 +49,7 @@ struct FpkEntry1
 
 typedef FpkEntry1<24> FpkV2Entry;
 typedef FpkEntry1<128> FpkV3Entry;
+typedef FpkEntry1<260> FpkV4Entry;
 
 struct FpkEntry2
 {
@@ -174,13 +175,14 @@ void extract_obfuscated(std::istream& fin, const fs::path& outpath, uint32_t ent
 	extract_toc(fin, toc, outpath, entry_count);
 }
 
-void extract_fpk(const fs::path& inpath, const fs::path& outpath, int version = 2)
+void extract_fpk(const fs::path& inpath, const fs::path& outpath, int version)
 {
 	std::ifstream fin(inpath, std::ios::binary);
 	fin.exceptions(std::ios::failbit | std::ios::badbit);
-	uint32_t entry_count = read<uint32_t>(fin);
-	uint32_t obfuscated = entry_count & 0x80000000;
-	entry_count &= ~0x80000000;
+	uint32_t fpk_header = read<uint32_t>(fin);
+	uint32_t flags = fpk_header & 0xF0000000;
+	uint32_t entry_count = fpk_header & 0x0FFFFFFF;
+	uint32_t obfuscated = flags & 0x80000000;
 	
 	if (options.verbose)
 	{
@@ -198,9 +200,18 @@ void extract_fpk(const fs::path& inpath, const fs::path& outpath, int version = 
 
 	if (obfuscated) 
 	{
-		if (version <= 2)
+		if (version <= 2) {
 			extract_obfuscated<FpkV2Entry>(fin, outpath, entry_count);
-		else extract_obfuscated<FpkV3Entry>(fin, outpath, entry_count);
+		}
+		else if (version == 3) {
+			extract_obfuscated<FpkV3Entry>(fin, outpath, entry_count);
+		}
+		else if (version == 4) {
+			extract_obfuscated<FpkV4Entry>(fin, outpath, entry_count);
+		}
+		else {
+			throw std::runtime_error("Unsupported FPK version: " + std::to_string(version));
+		}
 	}
 	else 
 	{
@@ -221,7 +232,8 @@ uint32_t hash(const std::string& s)
 	return res;
 }
 
-void pack_fpk_sync(const std::deque<fs::path>& files, const fs::path& outpath)
+template <typename T>
+void pack_fpk_sync(const std::deque<fs::path>& files, const fs::path& outpath, int version)
 {
 	if (options.verbose)
 		std::cout << "Starting single threaded packing...\n";
@@ -230,10 +242,10 @@ void pack_fpk_sync(const std::deque<fs::path>& files, const fs::path& outpath)
 	fout.exceptions(std::ios::failbit | std::ios::badbit);
 	
 	uint32_t file_count = files.size();
-	uint32_t fpk_header = file_count | 0x80000000;
+	uint32_t fpk_header = file_count | (version >= 4 ? 0xA0000000 : 0x80000000);
 	write(fout, fpk_header);
 	
-	std::multimap<uint32_t, FpkV2Entry> toc_map;
+	std::multimap<uint32_t, T> toc_map;
 
 	uint32_t h;
 	std::string fn;
@@ -252,7 +264,7 @@ void pack_fpk_sync(const std::deque<fs::path>& files, const fs::path& outpath)
 		//	file = rle::compress(file);
 
 		h = hash(fn);
-		toc_map.insert(std::make_pair(h, FpkV2Entry(fout.tellp(), file.size(), fn, h)));
+		toc_map.insert(std::make_pair(h, T(fout.tellp(), file.size(), fn, h)));
 
 		write(fout, file);
 
@@ -286,7 +298,8 @@ void file_loader(
 	}
 }
 
-void pack_fpk_async(const std::deque<fs::path>& files, const fs::path& outpath)
+template <typename T>
+void pack_fpk_async(const std::deque<fs::path>& files, const fs::path& outpath, int version)
 {
 	if (options.verbose)
 		std::cout << "Starting multi threaded packing...\n";
@@ -295,7 +308,7 @@ void pack_fpk_async(const std::deque<fs::path>& files, const fs::path& outpath)
 	fout.exceptions(std::ios::failbit | std::ios::badbit);
 
 	uint32_t file_count = files.size();
-	uint32_t fpk_header = file_count | 0x80000000;
+	uint32_t fpk_header = file_count | (version >= 4 ? 0xA0000000 : 0x80000000);
 	write(fout, fpk_header);
 
 	MultithreadCompressor<zlc> compressor(options.threads);
@@ -305,7 +318,7 @@ void pack_fpk_async(const std::deque<fs::path>& files, const fs::path& outpath)
 
 	std::thread producer(file_loader, std::ref(files), std::ref(compressor));
 
-	std::multimap<uint32_t, FpkV2Entry> toc_map;
+	std::multimap<uint32_t, T> toc_map;
 	std::pair<std::string, std::vector<uint8_t>> result;
 	uint32_t h;
 	uint32_t files_processed = 0;
@@ -315,7 +328,7 @@ void pack_fpk_async(const std::deque<fs::path>& files, const fs::path& outpath)
 			std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
 		h = hash(result.first);
-		toc_map.insert(std::make_pair(h, FpkV2Entry(fout.tellp(), result.second.size(), result.first, h)));
+		toc_map.insert(std::make_pair(h, T(fout.tellp(), result.second.size(), result.first, h)));
 
 		write(fout, result.second);
 
@@ -335,7 +348,7 @@ void pack_fpk_async(const std::deque<fs::path>& files, const fs::path& outpath)
 	producer.join();
 }
 
-void pack_fpk(const fs::path& inpath, const fs::path& outpath)
+void pack_fpk(const fs::path& inpath, const fs::path& outpath, int version)
 {
 	if (!fs::exists(inpath))
 		throw std::exception("The input path does not exist!");
@@ -351,9 +364,18 @@ void pack_fpk(const fs::path& inpath, const fs::path& outpath)
 		if (entry.is_regular_file())
 		{
 			auto fn = entry.path().filename().string();
-			if (fn.length() >= sizeof(FpkV2Entry::filename))
+			if (version <= 2 && fn.length() >= sizeof(FpkV2Entry::filename)) {
 				throw std::runtime_error("Filename \"" + fn + "\" too long. "
-					"Maximum length: " + std::to_string(sizeof(FpkV2Entry::filename) - 1));
+					"Maximum length for version 2: " + std::to_string(sizeof(FpkV2Entry::filename) - 1));
+			}
+			else if(version == 3 && fn.length() >= sizeof(FpkV3Entry::filename)) {
+				throw std::runtime_error("Filename \"" + fn + "\" too long. "
+					"Maximum length for version 3: " + std::to_string(sizeof(FpkV3Entry::filename) - 1));
+			}
+			else if (version == 4 && fn.length() >= sizeof(FpkV4Entry::filename)) {
+				throw std::runtime_error("Filename \"" + fn + "\" too long. "
+					"Maximum length for version 4: " + std::to_string(sizeof(FpkV4Entry::filename) - 1));
+			}
 			files.emplace_back(entry.path());
 		}
 		else if (entry.is_directory())
@@ -362,15 +384,41 @@ void pack_fpk(const fs::path& inpath, const fs::path& outpath)
 			std::cout << "Warning: Invalid file type of file " << entry.path() << ". This entry will be ignored.\n";
 	}
 
-	if (options.threads != 1)
-		pack_fpk_async(files, outpath);
-	else pack_fpk_sync(files, outpath);
+	if (options.threads != 1) {
+		if (version <= 2) {
+			pack_fpk_async<FpkV2Entry>(files, outpath, version);
+		}
+		else if (version == 3) {
+			pack_fpk_async<FpkV3Entry>(files, outpath, version);
+		}
+		else if (version == 4) {
+			pack_fpk_async<FpkV4Entry>(files, outpath, version);
+		}
+		else {
+			throw std::runtime_error("Unsupported FPK version: " + std::to_string(version));
+		}
+	}
+	else {
+		if (version <= 2) {
+			pack_fpk_sync<FpkV2Entry>(files, outpath, version);
+		}
+		else if (version == 3) {
+			pack_fpk_sync<FpkV3Entry>(files, outpath, version);
+		}
+		else if (version == 4) {
+			pack_fpk_sync<FpkV4Entry>(files, outpath, version);
+		}
+		else {
+			throw std::runtime_error("Unsupported FPK version: " + std::to_string(version));
+		}
+	}
 }
 
 
 void print_usage()
 {
 	std::cout <<
+		"Made by Anonym271, patched by julixian 2025.07.07\n"
 		"Usage: <me> [options] <input>\n"
 		"Options should be from the following list:\n\n"
 		"Modes:\n"
@@ -388,6 +436,7 @@ void print_usage()
 		"General options:\n"
 		"  -h, --help          show this help message and exit\n"
 		"  -o, --output        set the output path\n"
+		"  -ver --version      set the extract/repack version (default: 2)\n"
 		"  -v, --verbose       print detailed information while processing\n";
 }
 void print_usage_and_exit(int code = 0)
@@ -514,6 +563,8 @@ void parse_args(int argc, const char** argv)
 					options.key = args.next_ulong();
 				else if (arg == "-o" || arg == "--output")
 					options.output = args.next();
+				else if (arg == "-ver" || arg == "--version")
+					options.version = args.next_ulong();
 				else
 				{
 					// no matching option found
@@ -608,11 +659,11 @@ int main(int argc, const char** argv)
 	{
 		if (options.mode == ExecutionMode::EXTRACT)
 		{
-			extract_fpk(options.input, options.output);
+			extract_fpk(options.input, options.output, options.version);
 		}
 		else if (options.mode == ExecutionMode::PACK)
 		{
-			pack_fpk(options.input, options.output);
+			pack_fpk(options.input, options.output, options.version);
 		}
 		else if (options.mode == ExecutionMode::LIST)
 		{
